@@ -1,0 +1,214 @@
+{
+  "name": "Alcovia Focus Session Notification",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "focus-success",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Focus Session Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "alcovia-focus-success"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ─── Idempotency check ───────────────────────────────────────────\n// The backend sends a stable event_id per session.\n// We store seen event_ids in workflow static data so the same session\n// never triggers a notification twice, even if replayed from two devices.\n\nconst body = $input.first().json.body || $input.first().json;\nconst eventId = body.event_id;\n\nif (!eventId) {\n  return [{ json: { skip: true, reason: 'no event_id' } }];\n}\n\n// Get or init the seen-ids set in static data\nconst staticData = $getWorkflowStaticData('global');\nif (!staticData.seenEventIds) {\n  staticData.seenEventIds = {};\n}\n\nif (staticData.seenEventIds[eventId]) {\n  // Already processed — skip\n  console.log(`[Alcovia] Duplicate event ${eventId} — skipping notification`);\n  return [{ json: { skip: true, reason: 'duplicate', event_id: eventId } }];\n}\n\n// Mark as seen\nstaticData.seenEventIds[eventId] = new Date().toISOString();\n\n// Pass through the payload\nreturn [{ json: { skip: false, ...body } }];"
+      },
+      "id": "dedup-check",
+      "name": "Idempotency Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "skip-check",
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-not-skip",
+      "name": "Not a Duplicate?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build notification message\nconst data = $input.first().json;\nconst streak = data.streak || 0;\nconst coinsEarned = data.coins_earned || 50;\nconst totalCoins = data.total_coins || 0;\nconst minutes = data.target_minutes || 0;\nconst sessionId = (data.session_id || '').substring(0, 8);\n\nconst message = `🎉 Focus session complete!\\n\\n` +\n  `🔥 Streak now ${streak} day${streak !== 1 ? 's' : ''}\\n` +\n  `🪙 +${coinsEarned} coins (total: ${totalCoins})\\n` +\n  `⏱ ${minutes} minutes focused\\n` +\n  `📋 Session: ${sessionId}...`;\n\nreturn [{ json: { message, ...data } }];"
+      },
+      "id": "build-message",
+      "name": "Build Notification Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 240]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.MOCK_NOTIFY_URL || 'http://host.docker.internal:3001/mock-notify' }}",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "message",
+              "value": "={{ $json.message }}"
+            },
+            {
+              "name": "session_id",
+              "value": "={{ $json.session_id }}"
+            },
+            {
+              "name": "event_id",
+              "value": "={{ $json.event_id }}"
+            },
+            {
+              "name": "streak",
+              "value": "={{ $json.streak }}"
+            },
+            {
+              "name": "coins_earned",
+              "value": "={{ $json.coins_earned }}"
+            },
+            {
+              "name": "total_coins",
+              "value": "={{ $json.total_coins }}"
+            },
+            {
+              "name": "student_id",
+              "value": "={{ $json.student_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "send-notification",
+      "name": "Send Notification (Mock/WhatsApp)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 240]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, notified: true, session_id: $('build-message').first().json.session_id, event_id: $('build-message').first().json.event_id }) }}"
+      },
+      "id": "respond-success",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1340, 240]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, notified: false, reason: $json.reason, event_id: $json.event_id }) }}"
+      },
+      "id": "respond-skip",
+      "name": "Respond Skipped",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [900, 400]
+    }
+  ],
+  "connections": {
+    "Focus Session Webhook": {
+      "main": [
+        [
+          {
+            "node": "Idempotency Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Idempotency Check": {
+      "main": [
+        [
+          {
+            "node": "Not a Duplicate?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Not a Duplicate?": {
+      "main": [
+        [
+          {
+            "node": "Build Notification Message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Skipped",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Notification Message": {
+      "main": [
+        [
+          {
+            "node": "Send Notification (Mock/WhatsApp)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Notification (Mock/WhatsApp)": {
+      "main": [
+        [
+          {
+            "node": "Respond OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2024-01-01T00:00:00.000Z",
+      "updatedAt": "2024-01-01T00:00:00.000Z",
+      "id": "alcovia-tag",
+      "name": "alcovia"
+    }
+  ],
+  "triggerCount": 0,
+  "updatedAt": "2024-01-01T00:00:00.000Z",
+  "versionId": "alcovia-v1"
+}

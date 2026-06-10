@@ -1,0 +1,15 @@
+{
+  "expo": {
+    "name": "Alcovia",
+    "slug": "alcovia",
+    "version": "1.0.0",
+    "scheme": "alcovia",
+    "web": {
+      "bundler": "metro",
+      "output": "static"
+    },
+    "plugins": [
+      "expo-router"
+    ]
+  }
+}
